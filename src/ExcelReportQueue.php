@@ -25,11 +25,11 @@ class ExcelReportQueue extends BaseObject implements RetryableJobInterface {
 
     public function getTtr()
     {
-        return Yii::$app->params['export_queue_ttr'] ?: 5 * 60;
+        return isset(Yii::$app->params['export_queue_ttr']) && Yii::$app->params['export_queue_ttr'] ?: 5 * 60;
     }
 
-    public function canRetry($attempt, $error)
+    public function canRetry($attempt, $error): bool
     {
-        return Yii::$app->params['export_queue_retry'] ?: false;
+        return isset(Yii::$app->params['export_queue_retry']) && Yii::$app->params['export_queue_retry'] === true;
     }
 }
