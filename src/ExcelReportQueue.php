@@ -2,6 +2,7 @@
 
 namespace minasyans\excelreport;
 
+use Yii;
 use yii\base\BaseObject;
 use yii\queue\RetryableJobInterface;
 

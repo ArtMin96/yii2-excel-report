@@ -31,13 +31,13 @@ The preferred way to install this extension is through [composer](http://getcomp
 Either run
 
 ```
-php composer require --prefer-dist custom-it/yii2-excel-report
+php composer require --prefer-dist minasyans/yii2-excel-report
 ```
 
 or add
 
 ```
-"custom-it/yii2-excel-report": "*"
+"minasyans/yii2-excel-report": "*"
 ```
 
 to the require section of your `composer.json` file.
