@@ -2,6 +2,7 @@
 
 namespace minasyans\excelreport;
 
+use minasyans\excelreport\ExcelReportHelper;
 use Yii;
 use Box\Spout\Common\Exception\IOException;
 use Box\Spout\Common\Exception\UnsupportedTypeException;
@@ -13,6 +14,7 @@ use Box\Spout\Writer\Style\Border;
 use Box\Spout\Writer\Style\Color;
 use yii\base\InvalidConfigException;
 use box\spout;
+use yii\data\ArrayDataProvider;
 use yii\queue\Queue;
 use minasyans\excelreport\ExcelReportHelper;
 
@@ -315,9 +317,15 @@ class ExcelReportModel {
     public function generateBody()
     {
         $this->_endRow = 0;
-        $totalCount = $this->_provider->getTotalCount();        
+        $totalCount = $this->_provider->getTotalCount();
+
+        if ($this->_provider instanceof ArrayDataProvider) {
+            $query = $this->_provider->allModels;
+        } else {
+            $query = $this->_provider->query->each();
+        }
         
-        foreach ($this->_provider->query->each() as $value) {  
+        foreach ($query as $value) {
             $this->generateRow($value);
             $this->_endRow++;
             //Change queue process progress                
@@ -339,23 +347,29 @@ class ExcelReportModel {
         $key = count($this->_bodyData);
 
         foreach ($this->_columns as $column) {
-            $var = isset($column['attribute']) ? $column['attribute'] : null;
-            if (is_string($var)) {
-                $valueChain = explode('.', $var);
-                $bufObj = $data;
-                if (count($valueChain) > 1) {
-                    foreach ($valueChain as $vc) {
-                        $bufObj = is_object($bufObj) ? $bufObj->$vc : "---";
-                    }
-                    $value = $bufObj;
-                } else {
-                    $value = is_object($data) ? $data->$var : "---";
-                }
-            } elseif (is_object($var) && ExcelReportHelper::is_closure($var)) {
-                $value = call_user_func($var, $data);
+            $var = $column['attribute'] ?? null;
+
+            if ($this->_provider instanceof ArrayDataProvider) {
+                $value = $data[$column['attribute']];
             } else {
-                $value = null;
+                if (is_string($var)) {
+                    $valueChain = explode('.', $var);
+                    $bufObj = $data;
+                    if (count($valueChain) > 1) {
+                        foreach ($valueChain as $vc) {
+                            $bufObj = is_object($bufObj) ? $bufObj->$vc : "---";
+                        }
+                        $value = $bufObj;
+                    } else {
+                        $value = is_object($data) ? $data->$var : "---";
+                    }
+                } elseif (is_object($var) && ExcelReportHelper::is_closure($var)) {
+                    $value = call_user_func($var, $data);
+                } else {
+                    $value = null;
+                }
             }
+
             $this->_bodyData[$key][] = isset($column['format']) ? Yii::$app->formatter->format($value, $column['format']) : $value;
         }
     }
