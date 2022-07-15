@@ -16,7 +16,6 @@ use yii\base\InvalidConfigException;
 use box\spout;
 use yii\data\ArrayDataProvider;
 use yii\queue\Queue;
-use minasyans\excelreport\ExcelReportHelper;
 
 class ExcelReportModel {
 
