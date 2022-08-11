@@ -8,6 +8,7 @@ use minasyans\excelreport\ExcelReportHelper;
 
 class ExcelReport extends Widget
 {
+    public $name = 'excel_report_form';
     public $columns;
     public $stripHtml;
     public $dataProvider;
@@ -23,9 +24,9 @@ class ExcelReport extends Widget
 
     public function run()
     {
-        if (isset($_POST['excelReportAction']) || Yii::$app->session->has('excel-report-progress')) {
-            if (Yii::$app->session->has('excel-report-progress')) {
-                $data = unserialize(Yii::$app->session->get('excel-report-progress'));
+        if (isset($_POST['excelReportAction']) || Yii::$app->session->has('excel-report-progress-' . $this->name)) {
+            if (Yii::$app->session->has('excel-report-progress-' . $this->name)) {
+                $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $this->name));
                 $fileName = $data['fileName'];
                 $id = $data['queueid'];
             } else {
@@ -39,7 +40,7 @@ class ExcelReport extends Widget
                     'dataProvider' => $this->dataProvider,
                 ]));
 
-                Yii::$app->session->set('excel-report-progress', serialize(['fileName' => $fileName, 'queueid' => $id]));
+                Yii::$app->session->set('excel-report-progress-' . $this->name, serialize(['fileName' => $fileName, 'queueid' => $id]));
             }
 
             return $this->render('_progress', [

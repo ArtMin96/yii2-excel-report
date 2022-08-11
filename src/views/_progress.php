@@ -3,6 +3,7 @@
 use yii\helpers\Html;
 
 echo Html::hiddenInput('queueId', $queueId, ['id' => 'queueId']);
+echo Html::hiddenInput('name', $name, ['id' => 'name']);
 
 ?>
 
@@ -14,7 +15,7 @@ echo Html::hiddenInput('queueId', $queueId, ['id' => 'queueId']);
     </div>
 
     <div id="progress-file" style="display: none;">
-        <a href="/excelreport/report/download" target="_blank"><?= Yii::t('minasyans','Download last report') ?></a>
+        <a href="/excelreport/report/download?name=<?= $name ?>" target="_blank"><?= Yii::t('minasyans','Download last report') ?></a>
     </div>
     <div id="reset-progress" class="mt-1">
         <a id="reset-progress-link" href="#"><?= Yii::t('minasyans','Stop generation') ?></a>
@@ -23,7 +24,7 @@ echo Html::hiddenInput('queueId', $queueId, ['id' => 'queueId']);
 
 <script>
     var timerId = setInterval(function() {
-        $.post( "/excelreport/report/queue", { id: $('#queueId').val() }, function( data ) {
+        $.post( "/excelreport/report/queue", { id: $('#queueId').val(), name: $('#name').val() }, function( data ) {
             console.log(data);
             var $percent = data['progress'][0] * 100 / data['progress'][1];
             $('#reportProgress').css('width', $percent+'%').attr('aria-valuenow', $percent);
@@ -38,14 +39,14 @@ echo Html::hiddenInput('queueId', $queueId, ['id' => 'queueId']);
             }
         });
     }, 2000);
-    
-    document.addEventListener("DOMContentLoaded", function(event) { 
+
+    document.addEventListener("DOMContentLoaded", function(event) {
         $('#reset-progress-link').click(function (e) {
             e.preventDefault();
-            $.post( "/excelreport/report/reset", { id: $('#queueId').val() }, function( data ) {
+            $.post( "/excelreport/report/reset", { id: $('#queueId').val(), name: $('#name').val() }, function( data ) {
                 window.location.href = window.location.href;
             });
         });
     });
-    
+
 </script>
