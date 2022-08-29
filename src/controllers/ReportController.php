@@ -7,13 +7,13 @@ use yii\web\Controller;
 use yii\web\NotFoundHttpException;
 
 class ReportController extends Controller {
-    public function actionQueue(Request $request) {
+    public function actionQueue() {
         Yii::$app->response->format = \yii\web\Response::FORMAT_JSON;
-        $jobId = $request->post('id');
+        $jobId = $_POST['id'];
         $data = [];
 
-        if (Yii::$app->session->has('excel-report-progress-' . $request->post('name'))) {
-            $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $request->post('name')));
+        if (Yii::$app->session->has('excel-report-progress-' . $_POST['name'])) {
+            $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $_POST['name']));
         }
 
         return  [
@@ -22,9 +22,9 @@ class ReportController extends Controller {
         ];
     }
 
-    public function actionDownload(Request $request) {
-        if (Yii::$app->session->has('excel-report-progress-' . $request->get('name'))) {
-            $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $request->get('name')));
+    public function actionDownload() {
+        if (Yii::$app->session->has('excel-report-progress-' . $_POST['name'])) {
+            $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $_POST['name']));
             $file = Yii::$app->basePath . '/runtime/export/' . $data['fileName'] . '.xlsx';
 
             if (file_exists($file)) {
@@ -45,9 +45,9 @@ class ReportController extends Controller {
         }
     }
 
-    public function actionReset(Request $request) {
-        $jobId = $request->post('id');
+    public function actionReset() {
+        $jobId = $_POST['id'];
         Yii::$app->queue->setManuallyProgress($jobId, 1, 1);
-        Yii::$app->session->remove('excel-report-progress-' . $request->post('name'));
+        Yii::$app->session->remove('excel-report-progress-' . $_POST['name']);
     }
 }
