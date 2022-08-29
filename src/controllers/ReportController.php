@@ -23,8 +23,8 @@ class ReportController extends Controller {
     }
 
     public function actionDownload() {
-        if (Yii::$app->session->has('excel-report-progress-' . $_POST['name'])) {
-            $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $_POST['name']));
+        if (Yii::$app->session->has('excel-report-progress-' . $_GET['name'])) {
+            $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $_GET['name']));
             $file = Yii::$app->basePath . '/runtime/export/' . $data['fileName'] . '.xlsx';
 
             if (file_exists($file)) {
