@@ -46,6 +46,7 @@ class ExcelReport extends Widget
             return $this->render('_progress', [
                 'options' => $this->formOptions,
                 'queueId' => $id,
+                'name' => $this->name,
                 'file' => Yii::$app->basePath . '/runtime/export/' . $fileName . '.xlsx',
             ]);
         } else {
