@@ -29,19 +29,19 @@ class ReportController extends Controller {
 
             if (file_exists($file)) {
                 if (filesize($file) == 0) {
-                    throw new NotFoundHttpException('Файл заканчивает формирование. Осталось всего несколько секунд... Попробуйте нажать на ссылку еще раз ');
+                    throw new NotFoundHttpException('The file is finished forming. Only a few seconds left... Try clicking the link again');
                     return false;
                 } else {
-                    Yii::$app->session->remove('excel-report-progress');
+                    Yii::$app->session->remove('excel-report-progress-' . $_GET['name']);
                     ob_clean();
                     return \Yii::$app->response->sendFile($file, null, ['mimeType' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
                 }
             } else {
-                Yii::$app->session->remove('excel-report-progress');
-                throw new NotFoundHttpException('Такого файла не существует ');
+                Yii::$app->session->remove('excel-report-progress-' . $_GET['name']);
+                throw new NotFoundHttpException('This file does not exist');
             }
         } else {
-            throw new NotFoundHttpException('Такого файла не существует ');
+            throw new NotFoundHttpException('This file does not exist');
         }
     }
 

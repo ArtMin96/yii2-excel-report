@@ -349,7 +349,13 @@ class ExcelReportModel {
             $var = $column['attribute'] ?? null;
 
             if ($this->_provider instanceof ArrayDataProvider) {
-                $value = $data[$column['attribute']];
+                if (is_string($var)) {
+                    $value = $data[$column['attribute']];
+                }  elseif (is_object($var) && ExcelReportHelper::is_closure($var)) {
+                    $value = call_user_func($var, $data);
+                } else {
+                    $value = null;
+                }
             } else {
                 if (is_string($var)) {
                     $valueChain = explode('.', $var);
