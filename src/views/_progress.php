@@ -27,8 +27,16 @@ echo Html::hiddenInput('name', $name, ['id' => 'name']);
         $.post( "/excelreport/report/queue", { id: $('#queueId').val(), name: $('#name').val() }, function( data ) {
             console.log(data);
             var $percent = data['progress'][0] * 100 / data['progress'][1];
-            $('#reportProgress').css('width', $percent+'%').attr('aria-valuenow', $percent);
-            $('#reportProgress').html(Math.floor($percent)+'%');
+
+            if (data['ready'] === true) {
+                $percent = $percent + 1;
+                $('#reportProgress').css('width', $percent+'%').attr('aria-valuenow', $percent);
+                $('#reportProgress').html(Math.floor($percent)+'%');
+            } else {
+                $('#reportProgress').css('width', $percent+'%').attr('aria-valuenow', $percent);
+                $('#reportProgress').html(Math.floor($percent)+'%');
+            }
+
             if (data['ready'] === true) {
                 clearInterval(timerId);
                 $('#reset-progress').hide();
