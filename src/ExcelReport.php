@@ -50,7 +50,7 @@ class ExcelReport extends Widget
                 'file' => Yii::$app->basePath . '/runtime/export/' . $fileName . '.xlsx',
             ]);
         } else {
-            return $this->render('_form', ['options' => $this->formOptions]);
+            return $this->render('_form', ['options' => $this->formOptions, 'name' => $this->name]);
         }
     }
 }

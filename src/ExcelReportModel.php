@@ -119,6 +119,8 @@ class ExcelReportModel {
                 unset($columns[$key]);
             } elseif (isset($column['class']) && $column['class'] == 'yii\\grid\\SerialColumn') {
                 unset($columns[$key]);
+            } elseif (isset($column['class']) && $column['class'] == 'yii\\grid\\CheckboxColumn') {
+                unset($columns[$key]);
             } elseif (isset($column['value'])) {
                 $column['attribute'] = $column['value'];
             }
