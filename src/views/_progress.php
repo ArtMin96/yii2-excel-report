@@ -29,7 +29,7 @@ echo Html::hiddenInput('name', $name, ['id' => 'name']);
             var $percent = data['progress'][0] * 100 / data['progress'][1];
             $('#reportProgress').css('width', $percent+'%').attr('aria-valuenow', $percent);
             $('#reportProgress').html(Math.floor($percent)+'%');
-            if (data['progress'][0] == data['progress'][1]) {
+            if (data['ready'] === true) {
                 clearInterval(timerId);
                 $('#reset-progress').hide();
                 $('#progress-file').show();

@@ -2,23 +2,34 @@
 
 namespace minasyans\excelreport\controllers;
 
+use minasyans\excelreport\concerns\CanRetrieveJob;
 use Yii;
 use yii\web\Controller;
 use yii\web\NotFoundHttpException;
 
 class ReportController extends Controller {
+    use CanRetrieveJob;
+
     public function actionQueue() {
         Yii::$app->response->format = \yii\web\Response::FORMAT_JSON;
         $jobId = $_POST['id'];
         $data = [];
+        $ready = false;
+        $progress = Yii::$app->queue->getProgress($jobId);
+        $job = $this->retrieveJob($jobId);
 
         if (Yii::$app->session->has('excel-report-progress-' . $_POST['name'])) {
             $data = unserialize(Yii::$app->session->get('excel-report-progress-' . $_POST['name']));
         }
 
+        if (($progress[0] == $progress[1]) || ($progress[0] > 0 && ! $job)) {
+            $ready = true;
+        }
+
         return  [
-            'progress' => Yii::$app->queue->getProgress($jobId),
+            'progress' => $progress,
             'info' => $data,
+            'ready' => $ready,
         ];
     }
 
