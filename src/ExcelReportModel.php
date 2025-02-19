@@ -17,375 +17,352 @@ use box\spout;
 use yii\data\ArrayDataProvider;
 use yii\queue\Queue;
 
+/**
+ * ExcelReportModel handles the generation of Excel reports from Yii2 data providers.
+ *
+ * This class provides high-performance Excel report generation using the Box/Spout library,
+ * supporting both ArrayDataProvider and ActiveDataProvider as data sources.
+ *
+ * @property-read Writer $_writer The Box/Spout writer instance
+ * @property-read mixed $_provider The data provider (ArrayDataProvider or ActiveDataProvider)
+ * @property-read array $_columns The processed column configurations
+ *
+ * @since 1.0.0
+ */
 class ExcelReportModel {
-
-    /*
-     * @var ActiveDataProvider
-     */
+    /** @var mixed Data provider instance */
     private $_provider;
-    /*
-     * @var array
-     */
+
+    /** @var array Processed column configurations */
     private $_columns;
-    /*
-     * @var string
-     */
+
+    /** @var array Cached column accessors and metadata */
+    private $_columnCache = [];
+
+    /** @var \yii\i18n\Formatter Yii formatter instance */
+    private $_formatter;
+
+    /** @var Writer Box/Spout writer instance */
+    private $_writer;
+
+    /** @var array Default style for data rows */
+    private $_defaultRowStyle;
+
+    /** @var array Style for header row */
+    private $_headerStyle;
+
+    /** @var int Number of records to process in each batch */
+    private const BATCH_SIZE = 1000;
+
+    /** @var int How often to report progress to queue */
+    private const PROGRESS_REPORT_FREQUENCY = 1000;
+
+    /** @var string Output filename */
     public $filename;
-    /*
-     * @var bool
-     */
+
+    /** @var bool Whether to strip HTML from cell values */
     public $stripHtml = true;
-    /*
-     * @var string
-     */
+
+    /** @var string Output folder path */
     public $folder = '@app/runtime/export';
-    /*
-     * @var array
-     */
-    public $headerStyleOptions = [];
-    /*
-     * @var array
-     */
-    public $boxStyleOptions = [];
-    /*
-     * @var bool
-     */
-    public $enableFormatter = true;
-    /*
-     * @var array
-     */
-    public $styleOptions = [];
 
-    /*
-     * @var WriterInterface
-     */
-    protected $_objWriter;
-
-    protected $_objWorksheet;
-    /*
-     * @var int
-     */
-    protected $_endCol = 1;
-    /*
-     * @var string
-     */
-    protected $_exportType = 'xlsx';
-    /*
-     * @var int
-     */
-    protected $_endRow = 0;
-    /*
-     * @var int
-     */
-    protected $_beginRow = 1;
-    /*
-     * @var Queue
-     */
+    /** @var Queue Queue instance for progress reporting */
     protected $queue;
-    /*
-     * @var array
-     */
-    protected $_bodyData = [];
 
     /**
-     * ExcelReportModel constructor.
-     * @param string $columns base64 serialize array of gridview columns
-     * @param Queue $queue current queue for status reports
-     * @param string $fileName
-     * @param string $dataProvider base64 serialize array of ActiveDataProvider
-     * @param array $config
+     * Initialize the Excel report generator.
+     *
+     * @param string $columns Base64 encoded serialized array of gridview columns
+     * @param Queue $queue Queue instance for progress reporting
+     * @param string $fileName Output filename without extension
+     * @param string $dataProvider Base64 encoded serialized data provider
+     * @param array $config Additional configuration options
+     *
+     * @throws \Exception If data provider or columns cannot be unserialized
      */
     public function __construct($columns, $queue, $fileName, $dataProvider, array $config = [])
     {
         $this->_provider = ExcelReportHelper::reverseClosureDetect(unserialize(base64_decode($dataProvider)));
-        $this->_columns = $this->cleanColumns(ExcelReportHelper::reverseClosureDetect(unserialize(base64_decode($columns))));
+        $this->_columns = $this->optimizeColumns(ExcelReportHelper::reverseClosureDetect(unserialize(base64_decode($columns))));
         $this->queue = $queue;
         $this->filename = $fileName;
+        $this->_formatter = Yii::$app->formatter;
+
+        $this->initializeStyles();
+        $this->prepareColumnAccessors();
     }
 
     /**
-     * Remove extra columns
-     * @param array $columns array of gridview columns
-     * @return array
-     */
-    public function cleanColumns($columns) {
-        foreach ($columns as $key => &$column) {
-            if (!empty($column['hiddenFromExport'])) {
-                unset($columns[$key]);
-                continue;
-            }            
-            
-            if (isset($column['class']) && $column['class'] == 'yii\\grid\\ActionColumn') {
-                unset($columns[$key]);
-            } elseif (isset($column['class']) && $column['class'] == 'yii\\grid\\SerialColumn') {
-                unset($columns[$key]);
-            } elseif (isset($column['class']) && $column['class'] == 'yii\\grid\\CheckboxColumn') {
-                unset($columns[$key]);
-            } elseif (isset($column['value'])) {
-                $column['attribute'] = $column['value'];
-            }
-            
-        }
-        return $columns;
-    }
-
-    /**
-     * Entry point
-     */
-    public function start() {
-        $config = [
-            'extension' => 'xlsx',
-            'writer' => Type::XLSX,
-        ];
-        $this->initExport();
-        try {
-            $this->initExcelWriter($config);
-        } catch (InvalidConfigException $e) {
-            Yii::error($e->getMessage());
-            exit;
-        } catch (IOException $e) {
-            Yii::error($e->getMessage());
-            exit;
-        } catch (UnsupportedTypeException $e) {
-            Yii::error($e->getMessage());
-            exit;
-        }
-        $this->initExcelWorksheet();
-        $this->generateHeader();
-        $totalCount = $this->generateBody();
-        //Write data to file
-        $this->_objWriter->close();
-        $this->queue->setProgress($this->_endRow, $totalCount);
-        //Unset vars
-        $this->cleanup();
-    }
-
-    /**
-     * Initializes export settings
-     */
-    public function initExport()
-    {
-        $this->setDefaultStyles('header');
-        $this->setDefaultStyles('box');
-
-        if (!isset($this->filename)) {
-            $this->filename = 'grid-export';
-        }
-    }
-
-    /**
-     * Appends slash to path if it does not exist
+     * Filter and optimize column configurations.
      *
-     * @param string $path
-     * @param string $s the path separator
+     * @param array $columns Raw column configurations
+     * @return array Filtered and optimized columns
+     */
+    protected function optimizeColumns($columns)
+    {
+        return array_values(array_filter($columns, function($column) {
+            return empty($column['hiddenFromExport']) &&
+                (!isset($column['class']) || !in_array($column['class'], [
+                        'yii\\grid\\ActionColumn',
+                        'yii\\grid\\SerialColumn',
+                        'yii\\grid\\CheckboxColumn'
+                    ]));
+        }));
+    }
+
+    /**
+     * Initialize header and row styles.
      *
-     * @return string
+     * @return void
      */
-    public static function slash($path, $s = DIRECTORY_SEPARATOR)
+    protected function initializeStyles()
     {
-        $path = trim($path);
-        if (substr($path, -1) !== $s) {
-            $path .= $s;
-        }
-        return $path;
+        // Create header style
+        $headerBorder = (new BorderBuilder())
+            ->setBorderBottom(Color::BLACK, Border::WIDTH_MEDIUM, Border::STYLE_SOLID)
+            ->build();
+
+        $this->_headerStyle = (new StyleBuilder())
+            ->setFontBold()
+            ->setBackgroundColor('FFE5E5E5')
+            ->setBorder($headerBorder)
+            ->build();
+
+        // Create default row style
+        $rowBorder = (new BorderBuilder())
+            ->setBorderBottom(Color::BLACK, Border::WIDTH_MEDIUM, Border::STYLE_SOLID)
+            ->build();
+
+        $this->_defaultRowStyle = (new StyleBuilder())
+            ->setBorder($rowBorder)
+            ->build();
     }
 
     /**
-     * Sets default styles
+     * Prepare column accessors for efficient data access.
      *
-     * @param string $section
+     * @return void
      */
-    protected function setDefaultStyles($section)
+    protected function prepareColumnAccessors()
     {
-        $defaultStyle = [];
-        $opts = '';
-        if ($section === 'header') {
-            $opts = 'headerStyleOptions';
+        foreach ($this->_columns as $index => $column) {
+            $attribute = $column['attribute'] ?? null;
+            $format = $column['format'] ?? null;
+            $label = $column['label'] ?? ($column['header'] ?? '#');
 
-            $border = (new BorderBuilder())
-                ->setBorderBottom(Color::BLACK, Border::WIDTH_MEDIUM, Border::STYLE_SOLID)
-                ->build();
-            $defaultStyle = (new StyleBuilder())
-                ->setFontBold()
-                ->setBackgroundColor('FFE5E5E5')
-                ->setBorder($border)
-                ->build();
-
-        } elseif ($section === 'box') {
-            $opts = 'boxStyleOptions';
-
-            $border = (new BorderBuilder())
-                ->setBorderBottom(Color::BLACK, Border::WIDTH_MEDIUM, Border::STYLE_SOLID)
-                ->build();
-            $defaultStyle = (new StyleBuilder())
-                ->setBorder($border)
-                ->build();
-        }
-        if (empty($opts)) {
-            return;
-        }
-
-        $this->$opts = $defaultStyle;
-    }
-
-    /**
-     * Initializes Spout Writer Object Instance
-     *
-     * @param array $config
-     * @throws InvalidConfigException
-     * @throws \Box\Spout\Common\Exception\UnsupportedTypeException
-     * @throws \Box\Spout\Common\Exception\IOException
-     */
-    public function initExcelWriter($config)
-    {
-        $this->folder = trim(Yii::getAlias($this->folder));
-        $file = self::slash($this->folder) . $this->filename . '.' . $config['extension'];
-        if (!file_exists($this->folder) && !mkdir($this->folder, 0777, true)) {
-            throw new InvalidConfigException(
-                "Invalid permissions to write to '{$this->folder}' as set in `Export::folder` property."
-            );
-        }
-
-        $this->_objWriter = WriterFactory::create($config['writer']);
-        $this->_objWriter->setShouldUseInlineStrings(true);
-        $this->_objWriter->setShouldUseInlineStrings(false);
-
-        $this->_objWriter->openToFile($file);
-    }
-
-    /**
-     * Get Worksheet Instance
-     */
-    public function initExcelWorksheet()
-    {
-        $this->_objWorksheet = $this->_objWriter->getCurrentSheet();
-        $this->_objWorksheet->setName(Yii::t('minasyans','Report'));
-    }
-
-    /**
-     * Generates the output data header content.
-     */
-    public function generateHeader()
-    {
-        if (count($this->_columns) == 0) {
-            return;
-        }
-        $styleOpts = $this->headerStyleOptions;
-        $headValues = [];
-        $this->_endCol = 0;
-        //Generate labels array
-        foreach ($this->_columns as $column) {
-            $this->_endCol++;
-            if (isset($column['label'])) {
-                $head =  $column['label'];
-            } elseif (isset($column['header'])) {
-                $head =  $column['header'];
+            if (isset($column['value']) && is_callable($column['value'])) {
+                $accessor = $column['value'];  // Use callable directly
+                $isComputed = true; // Flag for computed value
+            } elseif (is_string($attribute)) {
+                $accessor = $this->compileStringAccessor($attribute);
+                $isComputed = false;
+            } elseif (is_callable($attribute)) {
+                $accessor = $attribute;
+                $isComputed = true;
             } else {
-                $head = '#';
+                $accessor = fn() => null;
+                $isComputed = false;
             }
-            $headValues[] = $head;
-        }
-        //Write header content
-        $this->setRowValues($headValues, $styleOpts);
-    }
 
-    /**
-     * Sets the values of excel row
-     *
-     * @param array $values
-     * @param array $style
-     *
-     */
-    protected function setRowValues($values, $style = null)
-    {
-        if ($this->stripHtml) {
-            array_walk_recursive($values, function (&$item, $key) {
-                $item = strip_tags($item);
-            });
-        }
-        if (!empty($style)) {
-            $this->_objWriter->addRowWithStyle($values, $style);
-        } else {
-            $this->_objWriter->addRows($values);
+            $this->_columnCache[$index] = [
+                'accessor' => $accessor,
+                'format' => $format,
+                'label' => $label,
+                'isComputed' => $isComputed, // Store the flag
+            ];
         }
     }
 
     /**
-     * Generates the output data body content.
-     *
-     * @return integer the number of output rows.
+     * Compiles an accessor for string attributes (optimized).
+     * @param string $attribute
+     * @return callable
      */
-    public function generateBody()
+    protected function compileStringAccessor(string $attribute): callable
     {
-        $this->_endRow = 0;
+        $path = explode('.', $attribute);
+
+        if (count($path) === 1) { // Direct attribute access
+            return function ($model) use ($attribute) {
+                return is_object($model) ? $model->$attribute : ($model[$attribute] ?? null);
+            };
+        } else { // Nested attribute access
+            return function ($model) use ($path) {
+                $current = $model;
+                foreach ($path as $key) {
+                    if (is_object($current)) {
+                        $current = $current->$key;
+                    } elseif (is_array($current)) {
+                        $current = $current[$key] ?? null;
+                    } else {
+                        return null; // Early return if not object/array
+                    }
+                }
+                return $current;
+            };
+        }
+    }
+
+    /**
+     * Start the Excel report generation process.
+     *
+     * @throws InvalidConfigException|IOException|UnsupportedTypeException
+     * @return void
+     */
+    public function start()
+    {
+        try {
+            $this->initWriter();
+            $this->writeHeader();
+            $totalCount = $this->writeBody();
+            $this->_writer->close();
+            $this->queue->setProgress($totalCount, $totalCount);
+        } catch (\Exception $e) {
+            Yii::error($e->getMessage());
+            throw $e;
+        } finally {
+            $this->cleanup();
+        }
+    }
+
+    /**
+     * Initialize the Box/Spout writer.
+     *
+     * @throws InvalidConfigException If the output directory cannot be created
+     * @throws IOException If the file cannot be opened for writing
+     * @throws UnsupportedTypeException If XLSX format is not supported
+     * @return void
+     */
+    protected function initWriter()
+    {
+        $folder = trim(Yii::getAlias($this->folder));
+        if (!file_exists($folder) && !mkdir($folder, 0777, true)) {
+            throw new InvalidConfigException("Cannot create directory: $folder");
+        }
+
+        $file = rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . $this->filename . '.xlsx';
+
+        $this->_writer = WriterFactory::create(Type::XLSX);
+        $this->_writer->setShouldUseInlineStrings(false);
+        $this->_writer->openToFile($file);
+
+        $this->_writer->getCurrentSheet()->setName(Yii::t('minasyans', 'Report'));
+    }
+
+    /**
+     * Write the header row to the Excel file.
+     *
+     * @return void
+     */
+    protected function writeHeader()
+    {
+        if (empty($this->_columnCache)) {
+            return;
+        }
+
+        $headers = array_column($this->_columnCache, 'label');
+        $this->_writer->addRowWithStyle($headers, $this->_headerStyle);
+    }
+
+    /**
+     * Write the data rows to the Excel file.
+     *
+     * @return int Total number of rows processed
+     */
+    protected function writeBody()
+    {
         $totalCount = $this->_provider->getTotalCount();
+        $processedCount = 0;
+        $rows = [];
 
-        if ($this->_provider instanceof ArrayDataProvider) {
-            $query = $this->_provider->allModels;
-        } else {
-            $query = $this->_provider->query->each();
-        }
-        
-        foreach ($query as $value) {
-            $this->generateRow($value);
-            $this->_endRow++;
-            //Change queue process progress                
-            if (($this->_endRow % 1000) == 0) $this->queue->setProgress($this->_endRow-1, $totalCount);
+        $dataIterator = $this->_provider instanceof ArrayDataProvider
+            ? [$this->_provider->allModels]
+            : $this->_provider->query->batch(self::BATCH_SIZE);
+
+        foreach ($dataIterator as $batch) {
+            $models = $this->_provider instanceof ArrayDataProvider ? [$batch] : $batch;
+
+            foreach ($models as $model) {
+                $rows[] = $this->generateRow($model);
+                $processedCount++;
+
+                if (count($rows) >= self::BATCH_SIZE) {
+                    $this->writeRows($rows);
+                    $rows = [];
+                }
+
+                if ($processedCount % self::PROGRESS_REPORT_FREQUENCY === 0) {
+                    $this->queue->setProgress($processedCount, $totalCount);
+                }
+            }
         }
 
-        $this->setRowValues($this->_bodyData);
+        if (!empty($rows)) {
+            $this->writeRows($rows);
+        }
+
         return $totalCount;
     }
 
     /**
-     * Generates an output data row with the given data.
+     * Generate a single data row.
      *
-     * @param mixed $data the data model to be rendered
+     * @param mixed $model The data model
+     * @return array Row data
      */
-    public function generateRow($data)
+    protected function generateRow($model)
     {
-        $this->_endCol = 0;
-        $key = count($this->_bodyData);
+        $row = [];
 
-        foreach ($this->_columns as $column) {
-            $var = $column['attribute'] ?? null;
-
-            if ($this->_provider instanceof ArrayDataProvider) {
-                if (is_string($var)) {
-                    $value = $data[$column['attribute']];
-                }  elseif (is_object($var) && ExcelReportHelper::is_closure($var)) {
-                    $value = call_user_func($var, $data);
-                } else {
-                    $value = null;
-                }
-            } else {
-                if (is_string($var)) {
-                    $valueChain = explode('.', $var);
-                    $bufObj = $data;
-                    if (count($valueChain) > 1) {
-                        foreach ($valueChain as $vc) {
-                            $bufObj = is_object($bufObj) ? $bufObj->$vc : "---";
-                        }
-                        $value = $bufObj;
-                    } else {
-                        $value = is_object($data) ? $data->$var : "---";
-                    }
-                } elseif (is_object($var) && ExcelReportHelper::is_closure($var)) {
-                    $value = call_user_func($var, $data);
-                } else {
-                    $value = null;
-                }
+        // Pre-compute values for closures only ONCE per row
+        $computedValues = [];
+        foreach ($this->_columnCache as $columnIndex => $columnData) {
+            if ($columnData['isComputed']) {  // Check the flag directly
+                $computedValues[$columnIndex] = $columnData['accessor']($model);
             }
+        }
 
-            $this->_bodyData[$key][] = isset($column['format']) ? Yii::$app->formatter->format($value, $column['format']) : $value;
+        foreach ($this->_columnCache as $columnIndex => $columnData) {
+            $value = $columnData['isComputed'] // Use pre-computed value if available
+                ? $computedValues[$columnIndex]
+                : $columnData['accessor']($model); // Otherwise, call the accessor
+
+            $row[] = $columnData['format']
+                ? $this->_formatter->format($value, $columnData['format'])
+                : $value;
+        }
+        return $row;
+    }
+
+    /**
+     * Write a batch of rows to the Excel file.
+     *
+     * @param array &$rows Array of row data
+     * @return void
+     */
+    protected function writeRows(array &$rows)
+    {
+        if ($this->stripHtml) {
+            array_walk_recursive($rows, function(&$item) {
+                $item = is_string($item) ? strip_tags($item) : $item;
+            });
+        }
+
+        foreach ($rows as $row) {
+            $this->_writer->addRowWithStyle($row, $this->_defaultRowStyle);
         }
     }
 
     /**
-     * Cleans up current objects instance
+     * Clean up resources after export completion.
+     *
+     * @return void
      */
     protected function cleanup()
     {
-        unset($this->_provider, $this->_objWriter);
+        $this->_writer = null;
+        $this->_provider = null;
+        $this->_columnCache = [];
+        gc_collect_cycles();
     }
 }
