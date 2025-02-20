@@ -39,6 +39,15 @@ class ExcelReportModel {
     /** @var array Cached column accessors and metadata */
     private $_columnCache = [];
 
+    /** @var array Cached computed values for the current batch */
+    private $_computedBatchValues = [];
+
+    /** @var array Map of column indices that need computation */
+    private $_computedColumnIndices = [];
+
+    /** @var array Optimized accessor functions */
+    private $_optimizedAccessors = [];
+
     /** @var \yii\i18n\Formatter Yii formatter instance */
     private $_formatter;
 
@@ -52,10 +61,10 @@ class ExcelReportModel {
     private $_headerStyle;
 
     /** @var int Number of records to process in each batch */
-    private const BATCH_SIZE = 1000;
+    const BATCH_SIZE = 1000;
 
     /** @var int How often to report progress to queue */
-    private const PROGRESS_REPORT_FREQUENCY = 1000;
+    const PROGRESS_REPORT_FREQUENCY = 1000;
 
     /** @var string Output filename */
     public $filename;
@@ -139,6 +148,72 @@ class ExcelReportModel {
     }
 
     /**
+     * Optimize the accessor for faster evaluation
+     * @param mixed $accessor Original accessor
+     * @param string $attribute Attribute name if available
+     * @return callable Optimized accessor
+     */
+    protected function optimizeAccessor($accessor, $attribute = null)
+    {
+        // If it's a simple attribute access, create a fast direct accessor
+        if (is_string($attribute) && strpos($attribute, '.') === false) {
+            return function ($model) use ($attribute) {
+                return is_object($model) ?
+                    ($model->$attribute ?? null) :
+                    ($model[$attribute] ?? null);
+            };
+        }
+
+        // If it's a nested attribute, create an optimized path accessor
+        if (is_string($attribute) && strpos($attribute, '.') !== false) {
+            $path = explode('.', $attribute);
+            return function ($model) use ($path) {
+                $value = $model;
+                foreach ($path as $key) {
+                    if (is_object($value)) {
+                        $value = $value->$key ?? null;
+                    } elseif (is_array($value)) {
+                        $value = $value[$key] ?? null;
+                    } else {
+                        return null;
+                    }
+                    if ($value === null) break;
+                }
+                return $value;
+            };
+        }
+
+        // If it's a closure, wrap it with caching logic
+        if (is_callable($accessor)) {
+            return function ($model) use ($accessor) {
+                $hash = $this->getModelHash($model);
+                if (!isset($this->_computedBatchValues[$hash])) {
+                    $this->_computedBatchValues[$hash] = $accessor($model);
+                }
+                return $this->_computedBatchValues[$hash];
+            };
+        }
+
+        return $accessor;
+    }
+
+    /**
+     * Get a unique hash for a model to use as cache key
+     * @param mixed $model
+     * @return string
+     */
+    protected function getModelHash($model): string
+    {
+        if (is_object($model)) {
+            return spl_object_hash($model);
+        }
+        if (is_array($model)) {
+            return md5(serialize($model));
+        }
+        return (string)$model;
+    }
+
+    /**
      * Prepare column accessors for efficient data access.
      *
      * @return void
@@ -150,17 +225,18 @@ class ExcelReportModel {
             $format = $column['format'] ?? null;
             $label = $column['label'] ?? ($column['header'] ?? '#');
 
+            // Create optimized accessor
             if (isset($column['value']) && is_callable($column['value'])) {
-                $accessor = $column['value'];  // Use callable directly
-                $isComputed = true; // Flag for computed value
+                $accessor = $this->optimizeAccessor($column['value']);
+                $isComputed = true;
             } elseif (is_string($attribute)) {
-                $accessor = $this->compileStringAccessor($attribute);
+                $accessor = $this->optimizeAccessor(null, $attribute);
                 $isComputed = false;
             } elseif (is_callable($attribute)) {
-                $accessor = $attribute;
+                $accessor = $this->optimizeAccessor($attribute);
                 $isComputed = true;
             } else {
-                $accessor = fn() => null;
+                $accessor = function () { return null; };
                 $isComputed = false;
             }
 
@@ -168,7 +244,7 @@ class ExcelReportModel {
                 'accessor' => $accessor,
                 'format' => $format,
                 'label' => $label,
-                'isComputed' => $isComputed, // Store the flag
+                'isComputed' => $isComputed,
             ];
         }
     }
@@ -282,6 +358,9 @@ class ExcelReportModel {
         foreach ($dataIterator as $batch) {
             $models = $this->_provider instanceof ArrayDataProvider ? [$batch] : $batch;
 
+            // Clear computed values cache for new batch
+            $this->_computedBatchValues = [];
+
             foreach ($models as $model) {
                 $rows[] = $this->generateRow($model);
                 $processedCount++;
@@ -289,6 +368,7 @@ class ExcelReportModel {
                 if (count($rows) >= self::BATCH_SIZE) {
                     $this->writeRows($rows);
                     $rows = [];
+                    gc_collect_cycles();
                 }
 
                 if ($processedCount % self::PROGRESS_REPORT_FREQUENCY === 0) {
@@ -305,6 +385,23 @@ class ExcelReportModel {
     }
 
     /**
+     * Pre-compute expensive column values for the entire batch
+     * @param array $models
+     */
+    protected function preComputeBatchValues(array $models)
+    {
+        $this->_computedBatchValues = [];
+
+        foreach ($models as $modelIndex => $model) {
+            foreach ($this->_computedColumnIndices as $columnIndex) {
+                $columnData = $this->_columnCache[$columnIndex];
+                $this->_computedBatchValues[$modelIndex][$columnIndex] =
+                    $columnData['accessor']($model);
+            }
+        }
+    }
+
+    /**
      * Generate a single data row.
      *
      * @param mixed $model The data model
@@ -314,23 +411,15 @@ class ExcelReportModel {
     {
         $row = [];
 
-        // Pre-compute values for closures only ONCE per row
-        $computedValues = [];
         foreach ($this->_columnCache as $columnIndex => $columnData) {
-            if ($columnData['isComputed']) {  // Check the flag directly
-                $computedValues[$columnIndex] = $columnData['accessor']($model);
-            }
-        }
-
-        foreach ($this->_columnCache as $columnIndex => $columnData) {
-            $value = $columnData['isComputed'] // Use pre-computed value if available
-                ? $computedValues[$columnIndex]
-                : $columnData['accessor']($model); // Otherwise, call the accessor
+            // Direct accessor invocation with optimized function
+            $value = $columnData['accessor']($model);
 
             $row[] = $columnData['format']
                 ? $this->_formatter->format($value, $columnData['format'])
                 : $value;
         }
+
         return $row;
     }
 
